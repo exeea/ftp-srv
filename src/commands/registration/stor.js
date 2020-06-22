@@ -11,9 +11,9 @@ module.exports = {
 
     return this.connector.waitForConnection()
     .tap(() => this.commandSocket.pause())
-    .then(() => Promise.try(() => this.fs.write(fileName, {append, start: this.restByteCount})))
+    .then(() => Promise.try(async () => await this.fs.write(fileName, {append, start: this.restByteCount})))
     .then((fsResponse) => {
-      let {stream, clientPath} = fsResponse;
+      let {stream, clientPath, semaphore} = fsResponse;
       if (!stream && !clientPath) {
         stream = fsResponse;
         clientPath = fileName;
@@ -36,6 +36,11 @@ module.exports = {
         stream.once('finish', () => resolve());
       });
 
+      const semaphorePromise = new Promise((resolve, reject) => {
+        semaphore.once('error', destroyConnection(this.connector.socket, reject));
+        semaphore.once('finish', () => resolve());
+      });
+
       const socketPromise = new Promise((resolve, reject) => {
         this.connector.socket.on('data', (data) => {
           if (this.connector.socket) this.connector.socket.pause();
@@ -54,7 +59,7 @@ module.exports = {
       this.restByteCount = 0;
 
       return this.reply(150).then(() => this.connector.socket.resume())
-      .then(() => Promise.all([streamPromise, socketPromise]))
+      .then(() => Promise.all([streamPromise, socketPromise, semaphorePromise]))
       .tap(() => this.emit('STOR', null, serverPath))
       .then(() => this.reply(226, clientPath))
       .finally(() => stream.destroy && stream.destroy());
